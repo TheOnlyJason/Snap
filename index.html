@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Snap Unfollowers</title>
+<meta name="description" content="Find the Snapchat friends who haven't added you back, from your Snapchat data export. Runs entirely in your browser.">
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #16181d; --muted: #5d6470; --line: #e3e6ea;
+    --accent: #ffd400; --accent-text: #16181d; --ok: #1f9d55; --danger: #c7372f; --row-done: #f0f9f3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #101216; --card: #181b21; --text: #eef0f3; --muted: #9aa3b0; --line: #2a2f38;
+      --accent: #ffd400; --accent-text: #16181d; --ok: #3fbf7a; --danger: #ff6b61; --row-done: #16261c;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #101216; --card: #181b21; --text: #eef0f3; --muted: #9aa3b0; --line: #2a2f38;
+    --accent: #ffd400; --accent-text: #16181d; --ok: #3fbf7a; --danger: #ff6b61; --row-done: #16261c;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  h2 { font-size: 1.1rem; margin: 0 0 8px; }
+  p { margin: 0 0 12px; }
+  .muted { color: var(--muted); font-size: 0.92rem; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin: 16px 0; }
+  .drop { border: 2px dashed var(--line); border-radius: 12px; padding: 28px 16px; text-align: center; cursor: pointer; }
+  .drop.over { border-color: var(--accent); background: rgba(255,212,0,0.08); }
+  .drop input { display: none; }
+  button, .btn { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: transparent; font-weight: 600; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 12px 0; }
+  .stat { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .stat b { display: block; font-size: 1.5rem; line-height: 1.2; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+  .tabs button { border: none; border-bottom: 3px solid transparent; border-radius: 0; background: none; padding: 8px 12px; }
+  .tabs button[aria-selected="true"] { border-bottom-color: var(--accent); font-weight: 600; }
+  input[type="search"] { font: inherit; width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); }
+  ul.people { list-style: none; margin: 12px 0 0; padding: 0; }
+  ul.people li { display: flex; gap: 12px; align-items: center; padding: 10px 8px; border-top: 1px solid var(--line); }
+  ul.people li.done { background: var(--row-done); }
+  ul.people li.done .name { text-decoration: line-through; color: var(--muted); }
+  ul.people input { width: 20px; height: 20px; flex: none; }
+  .name { font-weight: 600; word-break: break-all; }
+  .sub { color: var(--muted); font-size: 0.85rem; }
+  .grow { flex: 1; min-width: 0; }
+  ol { padding-left: 20px; }
+  .hidden { display: none; }
+  .warn { border-left: 4px solid var(--danger); padding-left: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Snap Unfollowers</h1>
+  <p class="muted">Find the people you added on Snapchat who never added you back. Everything runs in this page; your file is not uploaded anywhere.</p>
+
+  <section class="card" id="step1">
+    <h2>1. Get your Snapchat data</h2>
+    <ol>
+      <li>Sign in at <strong>accounts.snapchat.com</strong> and open <strong>My Data</strong>.</li>
+      <li>Tick <strong>Friends</strong> (you can untick everything else), choose <strong>JSON</strong> as the format, and submit.</li>
+      <li>Snapchat emails you a link to a <code>mydata~….zip</code>. Download it. Inside is <code>json/friends.json</code>.</li>
+    </ol>
+  </section>
+
+  <section class="card">
+    <h2>2. Open the file here</h2>
+    <label class="drop" id="drop">
+      <input type="file" id="file" accept=".json,.zip,application/json,application/zip">
+      <div><strong>Choose or drop</strong> your <code>friends.json</code> (or the whole <code>mydata~….zip</code>)</div>
+      <div class="muted" id="fileName">Nothing loaded yet. Stays on your device.</div>
+    </label>
+    <p class="muted" id="error" role="alert"></p>
+  </section>
+
+  <section class="card hidden" id="results">
+    <div class="stats">
+      <div class="stat"><b id="nMutual">0</b><span class="muted">Mutual friends</span></div>
+      <div class="stat"><b id="nNotBack">0</b><span class="muted">Didn't add you back</span></div>
+      <div class="stat"><b id="nPending">0</b><span class="muted">You didn't add back</span></div>
+    </div>
+    <div class="tabs" role="tablist">
+      <button role="tab" aria-selected="true" data-tab="notBack">Didn't add you back</button>
+      <button role="tab" aria-selected="false" data-tab="pending">You didn't add back</button>
+    </div>
+    <p class="muted" id="tabHelp"></p>
+    <div class="row">
+      <input type="search" id="search" placeholder="Filter by username or name">
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button id="copy">Copy usernames</button>
+      <button id="csv">Download CSV</button>
+      <button id="reset">Clear ticks</button>
+      <span class="muted grow" id="progress"></span>
+    </div>
+    <ul class="people" id="list"></ul>
+  </section>
+
+  <section class="card hidden" id="step3">
+    <h2>3. Remove them in Snapchat</h2>
+    <p>There is no safe way to remove friends automatically, so tick each person off here as you do it in the app:</p>
+    <ol>
+      <li>Open Snapchat, tap your <strong>profile</strong> (top left), then <strong>My Friends</strong>.</li>
+      <li>Search the username, open their profile and tap <strong>⋯</strong> (top right).</li>
+      <li>Tap <strong>Manage Friendship</strong> → <strong>Remove Friend</strong>.</li>
+    </ol>
+    <p class="muted warn">Your export is a snapshot. If their <strong>Snap Score is hidden</strong> on their profile they still haven't added you back; if you can see it, they added you since the export, so skip them.</p>
+  </section>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var state = { notBack: [], pending: [], tab: 'notBack', filter: '', doneKey: 'snap-unfollowers-done' };
+  var done = loadDone();
+
+  function loadDone() { try { return JSON.parse(localStorage.getItem(state.doneKey) || '{}'); } catch (e) { return {}; } }
+  function saveDone() { try { localStorage.setItem(state.doneKey, JSON.stringify(done)); } catch (e) { /* private mode etc. */ } }
+
+  function lowerKeys(obj) {
+    var out = {};
+    Object.keys(obj || {}).forEach(function (k) { out[String(k).trim().toLowerCase()] = obj[k]; });
+    return out;
+  }
+  function field(row, names) {
+    var low = lowerKeys(row);
+    for (var i = 0; i < names.length; i++) {
+      var v = low[names[i].toLowerCase()];
+      if (v !== undefined && v !== null && String(v).trim()) return String(v).trim();
+    }
+    return '';
+  }
+  function peopleIn(data, section) {
+    var rows = lowerKeys(data)[section];
+    if (!Array.isArray(rows)) return [];
+    return rows.filter(function (r) { return r && typeof r === 'object'; }).map(function (r) {
+      return {
+        username: field(r, ['Username', 'User Name', 'user_name']),
+        displayName: field(r, ['Display Name', 'DisplayName', 'display_name', 'Name']),
+        added: field(r, ['Creation Timestamp', 'Created', 'Timestamp', 'Date']),
+        source: field(r, ['Source'])
+      };
+    }).filter(function (p) { return p.username; });
+  }
+  function nameSet(people) { var s = {}; people.forEach(function (p) { s[p.username.toLowerCase()] = true; }); return s; }
+  function dedupeExcluding(people, excludeSets) {
+    var seen = {}, out = [];
+    people.forEach(function (p) {
+      var k = p.username.toLowerCase();
+      if (seen[k]) return;
+      for (var i = 0; i < excludeSets.length; i++) if (excludeSets[i][k]) return;
+      seen[k] = true; out.push(p);
+    });
+    return out.sort(function (a, b) {
+      var da = Date.parse(a.added.replace(' UTC', 'Z').replace(' ', 'T')), db = Date.parse(b.added.replace(' UTC', 'Z').replace(' ', 'T'));
+      var na = isNaN(da), nb = isNaN(db);
+      if (na !== nb) return na ? 1 : -1;
+      if (!na && da !== db) return da - db;
+      return a.username.toLowerCase().localeCompare(b.username.toLowerCase());
+    });
+  }
+  function analyse(data) {
+    var mutual = nameSet(peopleIn(data, 'friends'));
+    var blocked = nameSet(peopleIn(data, 'blocked users'));
+    var ignored = nameSet(peopleIn(data, 'ignored snapchatters'));
+    state.notBack = dedupeExcluding(peopleIn(data, 'friend requests sent'), [mutual, blocked]);
+    state.pending = dedupeExcluding(peopleIn(data, 'pending requests'), [mutual, blocked, ignored]);
+    $('nMutual').textContent = Object.keys(mutual).length;
+    $('nNotBack').textContent = state.notBack.length;
+    $('nPending').textContent = state.pending.length;
+    $('results').classList.remove('hidden');
+    $('step3').classList.remove('hidden');
+    render();
+  }
+
+  function current() { return state.tab === 'notBack' ? state.notBack : state.pending; }
+  function visible() {
+    var f = state.filter.toLowerCase();
+    return current().filter(function (p) { return !f || p.username.toLowerCase().indexOf(f) >= 0 || p.displayName.toLowerCase().indexOf(f) >= 0; });
+  }
+  function render() {
+    $('tabHelp').textContent = state.tab === 'notBack'
+      ? 'You added these people, but they have not added you back. This is the list to remove. Oldest first.'
+      : 'These people added you, but you have not added them back. Nothing to remove here; accept or ignore them in the app.';
+    var list = $('list'); list.innerHTML = '';
+    var people = visible(), ticked = 0;
+    people.forEach(function (p) {
+      var li = document.createElement('li'), key = state.tab + ':' + p.username.toLowerCase();
+      var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!done[key];
+      cb.setAttribute('aria-label', 'Removed ' + p.username);
+      cb.addEventListener('change', function () { if (cb.checked) done[key] = 1; else delete done[key]; saveDone(); li.classList.toggle('done', cb.checked); updateProgress(); });
+      if (cb.checked) { li.classList.add('done'); ticked++; }
+      var text = document.createElement('div'); text.className = 'grow';
+      var name = document.createElement('div'); name.className = 'name'; name.textContent = p.username;
+      var sub = document.createElement('div'); sub.className = 'sub';
+      sub.textContent = (p.displayName ? p.displayName + ' · ' : '') + (p.added ? 'added ' + p.added.slice(0, 10) : 'date unknown');
+      text.appendChild(name); text.appendChild(sub);
+      li.appendChild(cb); li.appendChild(text); list.appendChild(li);
+    });
+    if (!people.length) { var li0 = document.createElement('li'); li0.className = 'muted'; li0.textContent = current().length ? 'No matches for that filter.' : 'Nobody in this list.'; list.appendChild(li0); }
+    updateProgress();
+  }
+  function updateProgress() {
+    var all = current(), n = 0;
+    all.forEach(function (p) { if (done[state.tab + ':' + p.username.toLowerCase()]) n++; });
+    $('progress').textContent = all.length ? n + ' of ' + all.length + ' ticked off' : '';
+  }
+
+  function showError(msg) { $('error').textContent = msg; }
+  function handleFile(file) {
+    showError('');
+    if (!file) return;
+    $('fileName').textContent = file.name + ' (' + Math.round(file.size / 1024) + ' KB)';
+    var isZip = /\.zip$/i.test(file.name) || file.type === 'application/zip' || file.type === 'application/x-zip-compressed';
+    if (isZip) {
+      if (!window.JSZip) { showError('Could not load the zip reader (offline?). Unzip the file and choose json/friends.json instead.'); return; }
+      JSZip.loadAsync(file).then(function (zip) {
+        var entry = null;
+        zip.forEach(function (path, f) { if (/(^|\/)friends\.json$/i.test(path) && (!entry || path.length < entry.name.length)) entry = f; });
+        if (!entry) throw new Error('This zip has no friends.json. Request the export again with "Friends" ticked and JSON format.');
+        return entry.async('string');
+      }).then(parseText).catch(function (e) { showError(e.message || String(e)); });
+    } else {
+      var reader = new FileReader();
+      reader.onload = function () { parseText(reader.result); };
+      reader.onerror = function () { showError('Could not read that file.'); };
+      reader.readAsText(file);
+    }
+  }
+  function parseText(text) {
+    var data;
+    try { data = JSON.parse(String(text).replace(/^﻿/, '')); }
+    catch (e) { showError('That is not a JSON file. If your export is HTML, request it again from accounts.snapchat.com and pick JSON.'); return; }
+    if (!data || typeof data !== 'object' || Array.isArray(data)) { showError('That does not look like a Snapchat friends.json.'); return; }
+    analyse(data);
+  }
+
+  $('file').addEventListener('change', function (e) { handleFile(e.target.files[0]); });
+  var drop = $('drop');
+  ['dragenter', 'dragover'].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add('over'); }); });
+  ['dragleave', 'drop'].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove('over'); }); });
+  drop.addEventListener('drop', function (e) { handleFile(e.dataTransfer.files[0]); });
+
+  Array.prototype.forEach.call(document.querySelectorAll('.tabs button'), function (btn) {
+    btn.addEventListener('click', function () {
+      state.tab = btn.getAttribute('data-tab');
+      Array.prototype.forEach.call(document.querySelectorAll('.tabs button'), function (b) { b.setAttribute('aria-selected', b === btn ? 'true' : 'false'); });
+      render();
+    });
+  });
+  $('search').addEventListener('input', function (e) { state.filter = e.target.value.trim(); render(); });
+  $('copy').addEventListener('click', function () {
+    var text = visible().map(function (p) { return p.username; }).join('\n');
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(function () { $('copy').textContent = 'Copied!'; setTimeout(function () { $('copy').textContent = 'Copy usernames'; }, 1500); });
+    else window.prompt('Copy these usernames:', text);
+  });
+  $('csv').addEventListener('click', function () {
+    var q = function (s) { return '"' + String(s).replace(/"/g, '""') + '"'; };
+    var rows = [['username', 'display_name', 'added', 'source', 'removed']].concat(visible().map(function (p) {
+      return [p.username, p.displayName, p.added, p.source, done[state.tab + ':' + p.username.toLowerCase()] ? 'yes' : 'no'];
+    }));
+    var blob = new Blob([rows.map(function (r) { return r.map(q).join(','); }).join('\n') + '\n'], { type: 'text/csv' });
+    var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = (state.tab === 'notBack' ? 'not_following_back' : 'not_added_back_by_me') + '.csv'; a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  });
+  $('reset').addEventListener('click', function () {
+    if (!window.confirm('Clear all ticks for this list?')) return;
+    current().forEach(function (p) { delete done[state.tab + ':' + p.username.toLowerCase()]; });
+    saveDone(); render();
+  });
+})();
+</script>
+</body>
+</html>

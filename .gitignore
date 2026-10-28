@@ -1,0 +1,14 @@
+# Your real Snapchat data export is personal data. Never commit it.
+friends.json
+mydata*
+mydata*/
+*.zip
+json/
+html/
+not_following_back.*
+remove.md
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
