@@ -25,7 +25,7 @@ function parseArgs(argv) {
   const o = { list: null, limit: 100, dryRun: false, discover: null, url: 'https://web.snapchat.com',
     minDelay: 5000, maxDelay: 11000, breakEvery: 25, breakMs: 90000, headless: false, noWait: false,
     profile: path.join(__dirname, 'profile'), progress: path.join(__dirname, 'progress.csv'),
-    outDir: path.join(__dirname, 'discover'), maxFailures: 3 };
+    outDir: path.join(__dirname, 'discover'), maxFailures: 3, loginTimeout: 15 * 60 * 1000 };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i], next = () => argv[++i];
     if (a === '--list') o.list = next();
@@ -38,6 +38,7 @@ function parseArgs(argv) {
     else if (a === '--break-every') o.breakEvery = parseInt(next(), 10);
     else if (a === '--break-ms') o.breakMs = parseInt(next(), 10);
     else if (a === '--max-failures') o.maxFailures = parseInt(next(), 10);
+    else if (a === '--login-timeout') o.loginTimeout = parseInt(next(), 10) * 1000;
     else if (a === '--profile') o.profile = next();
     else if (a === '--progress') o.progress = next();
     else if (a === '--headless') o.headless = true;      // for automated tests only
@@ -92,6 +93,25 @@ function waitForEnter(msg) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise(r => rl.question(msg, () => { rl.close(); r(); }));
 }
+async function waitForLogin(page, timeoutMs) {
+  // Logged in = the chat UI is there (Add Friends / New Chat button or a search box) and we are not on a login page.
+  const deadline = Date.now() + timeoutMs;
+  let lastNote = 0;
+  while (Date.now() < deadline) {
+    const url = page.url();
+    const onLogin = /accounts\.snapchat\.com|login|signin/i.test(url);
+    const ui = await firstVisible(page, [
+      page.getByRole('button', { name: /add friends?|new chat|compose/i }),
+      page.getByRole('searchbox'),
+      page.getByPlaceholder(/search/i),
+    ], 500);
+    if (ui && !onLogin) { console.log('Logged in; starting.'); await sleep(1500); return; }
+    if (Date.now() - lastNote > 30000) { lastNote = Date.now(); console.log('Waiting for login in the browser window... (' + Math.round((deadline - Date.now()) / 60000) + ' min left)'); }
+    await sleep(2000);
+  }
+  throw new Error('No login detected within the timeout. Log in to web.snapchat.com in the window and run again.');
+}
+
 async function firstVisible(page, locators, timeout) {
   // Return the first locator in the list that becomes visible within `timeout` ms.
   const deadline = Date.now() + timeout;
@@ -234,8 +254,13 @@ async function main() {
   await page.goto(opts.url, { waitUntil: 'domcontentloaded' });
 
   if (!opts.noWait) {
-    console.log('\nA browser window is open on ' + opts.url + '.');
-    await waitForEnter('Log in there if needed, wait until your chats are visible, then press Enter here to start... ');
+    console.log('\nA browser window is open on ' + opts.url + '. Log in there if needed.');
+    if (process.stdin.isTTY) {
+      await waitForEnter('Wait until your chats are visible, then press Enter here to start... ');
+    } else {
+      // Not an interactive terminal (e.g. run by Claude): watch the page for the logged-in UI instead.
+      await waitForLogin(page, opts.loginTimeout);
+    }
   }
 
   if (opts.discover) {

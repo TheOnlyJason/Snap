@@ -34,8 +34,9 @@ npx playwright install chromium
 node web/unfriend.js --discover some_username_from_your_list
 ```
 
-A browser window opens on web.snapchat.com. Log in, wait for your chats to appear, go
-back to the terminal and press Enter. The script tries the removal steps in dry-run
+A browser window opens on web.snapchat.com. Log in and wait for your chats to appear.
+From a terminal, press Enter to continue; when Claude runs the script for you, it notices
+the login by itself (up to 15 minutes). The script tries the removal steps in dry-run
 mode and writes a screenshot plus a text tree of the page at each step to
 `web/discover/`. If it reports `Result: { status: 'dry-run', ... }` the selectors fit.
 If it reports `Stopped at: could not find ...`, send the files in `web/discover/` back
@@ -74,6 +75,7 @@ confirm the list shrank.
 | `--min-delay MS` / `--max-delay MS` | 5000 / 11000 | pause between people |
 | `--break-every N` / `--break-ms MS` | 25 / 90000 | longer pause every N people |
 | `--max-failures N` | 3 | stop after N consecutive failures |
+| `--login-timeout SECONDS` | 900 | when not run from a terminal, how long to wait for you to log in |
 | `--profile DIR` | web/profile | where the browser login is kept |
 | `--progress FILE` | web/progress.csv | progress log |
 | `--url URL` | https://web.snapchat.com | page to open (used by the tests with a mock page) |
