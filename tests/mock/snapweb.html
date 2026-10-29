@@ -1,0 +1,52 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Mock Snapchat for Web</title>
+<style>body{font-family:sans-serif} .hidden{display:none} ul{list-style:none;padding:0} li{padding:4px;cursor:pointer}</style></head>
+<body>
+<h1>Chats</h1>
+<button id="addFriends">Add Friends</button>
+<div id="panel" class="hidden">
+  <input id="q" placeholder="Search by username" aria-label="Search">
+  <ul id="results" role="listbox"></ul>
+</div>
+<div id="chat" class="hidden">
+  <button id="header"></button>
+  <div id="menu" class="hidden" role="menu">
+    <div role="menuitem" id="manage">Manage Friendship</div>
+  </div>
+  <div id="submenu" class="hidden" role="menu">
+    <div role="menuitem" id="remove">Remove Friend</div>
+  </div>
+</div>
+<div id="dialog" class="hidden" role="dialog">
+  <p>Remove this friend?</p>
+  <button id="cancel">Cancel</button>
+  <button id="confirm">Remove</button>
+</div>
+<pre id="log"></pre>
+<script>
+  // "server state": who is still a one-way friend. Readable by tests via window.state.
+  window.state = { friends: ['party_guy_2021', 'travel.influencer', 'old_classmate', 'ghost_user'], removed: [] };
+  var current = null;
+  var $ = function (id) { return document.getElementById(id); };
+  $('addFriends').onclick = function () { $('panel').classList.remove('hidden'); $('q').focus(); };
+  $('q').oninput = function () {
+    var q = $('q').value.toLowerCase(), ul = $('results'); ul.innerHTML = '';
+    window.state.friends.filter(function (u) { return q && u.indexOf(q) >= 0 && u !== 'ghost_user'; }).forEach(function (u) {
+      var li = document.createElement('li'); li.setAttribute('role', 'option'); li.textContent = u + ' (' + u.split('_')[0] + ')';
+      li.onclick = function () { current = u; $('chat').classList.remove('hidden'); $('header').textContent = u; $('panel').classList.add('hidden'); };
+      ul.appendChild(li);
+    });
+  };
+  $('header').onclick = function () { $('menu').classList.toggle('hidden'); };
+  $('manage').onclick = function () { $('menu').classList.add('hidden'); $('submenu').classList.remove('hidden'); };
+  $('remove').onclick = function () { $('submenu').classList.add('hidden'); $('dialog').classList.remove('hidden'); };
+  $('cancel').onclick = function () { $('dialog').classList.add('hidden'); };
+  $('confirm').onclick = function () {
+    $('dialog').classList.add('hidden');
+    window.state.friends = window.state.friends.filter(function (u) { return u !== current; });
+    window.state.removed.push(current); $('chat').classList.add('hidden'); $('q').value = ''; $('results').innerHTML = '';
+    $('log').textContent += 'removed ' + current + '\n';
+  };
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { $('dialog').classList.add('hidden'); $('menu').classList.add('hidden'); $('submenu').classList.add('hidden'); } });
+</script>
+</body></html>

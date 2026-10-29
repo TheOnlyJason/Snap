@@ -13,3 +13,12 @@ remove.md
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Snapchat for Web automation: browser login, progress and screenshots are personal
+web/profile/
+web/progress.csv
+web/discover/
+web/node_modules/
+web/package.json
+web/package-lock.json
+usernames.txt

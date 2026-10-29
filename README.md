@@ -78,7 +78,14 @@ No dependencies beyond the Python standard library. Try it on the bundled sample
 
 ## 3. Remove them in Snapchat
 
-For each username on the list:
+There are two ways: by hand in the app, or with the Snapchat for Web helper in
+[`web/`](web/README.md), which drives web.snapchat.com in a browser window on your own
+computer, with your own login, and works through the list with human-like pacing. The
+web helper is unverified against the live site (Snapchat only documents removal in the
+mobile app), carries some account-lock risk if pushed too fast, and starts with a
+discovery run; read `web/README.md` before using it.
+
+By hand, for each username on the list:
 
 1. Open Snapchat, tap your **profile** (top left), then **My Friends**.
 2. Search the username and open their profile.
@@ -116,5 +123,6 @@ it when you're done.
 ## Development
 
 ```bash
-python3 -m unittest discover -s tests -v
+python3 -m unittest discover -s tests -v     # analyser
+bash tests/test_web_unfriend.sh              # web helper, against tests/mock/snapweb.html (needs node + playwright)
 ```
