@@ -4,8 +4,9 @@ snap_unfollowers.py - find the Snapchat friends who haven't added you back.
 
 Snapchat has no public API for friend lists, so this works from the official
 "Download My Data" export (accounts.snapchat.com -> My Data), specifically the
-``friends.json`` file inside it.  Point the script at that file, at the
-unzipped export folder, or at the downloaded ``.zip`` itself.
+``friends.json`` (JSON export) or ``friends.html`` (HTML export) file inside
+it.  Point the script at that file, at the unzipped export folder, or at the
+downloaded ``.zip`` itself.
 
 Typical use::
 
@@ -27,6 +28,7 @@ import json
 import os
 import sys
 import zipfile
+from html.parser import HTMLParser
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional
@@ -42,6 +44,7 @@ SECTION_BLOCKED = "blocked users"
 SECTION_IGNORED = "ignored snapchatters"
 
 FORMATS = ("table", "csv", "json", "checklist", "usernames")
+FRIENDS_FILES = ("friends.json", "friends.html")
 
 
 @dataclass(frozen=True)
@@ -61,43 +64,63 @@ class Person:
 # --------------------------------------------------------------------------- loading
 
 def load_friends_data(path: str) -> Dict[str, Any]:
-    """Load friends.json from a file path, an extracted export folder, or the export .zip."""
+    """Load the friends list from a file path, an extracted export folder, or the export .zip.
+
+    Accepts ``friends.json`` (JSON export) or ``friends.html`` (HTML export); the
+    result always has the JSON export's shape (section name -> list of rows).
+    """
     if not os.path.exists(path):
         raise FileNotFoundError(f"No such file or folder: {path}")
 
     if os.path.isdir(path):
-        found = _find_in_dir(path, "friends.json")
+        found = _find_in_dir(path, FRIENDS_FILES)
         if not found:
             raise FileNotFoundError(
-                f"Could not find friends.json anywhere under {path}. "
-                "Make sure you requested the export in JSON format and included 'Friends'."
+                f"Could not find friends.json or friends.html anywhere under {path}. "
+                "Make sure you ticked 'Friends' when requesting the export."
             )
-        with open(found, "r", encoding="utf-8") as fh:
-            return _parse_json(fh.read(), found)
+        with open(found, "rb") as fh:
+            return _parse_bytes(fh.read(), found)
 
     if zipfile.is_zipfile(path):
         with zipfile.ZipFile(path) as zf:
-            candidates = [n for n in zf.namelist() if os.path.basename(n).lower() == "friends.json"]
+            candidates = [n for n in zf.namelist() if os.path.basename(n).lower() in FRIENDS_FILES]
             if not candidates:
                 raise FileNotFoundError(
-                    f"{path} does not contain a friends.json. "
-                    "Make sure you requested the export in JSON format and included 'Friends'."
+                    f"{path} does not contain a friends.json or friends.html. "
+                    "Make sure you ticked 'Friends' when requesting the export."
                 )
-            # Prefer the conventional json/friends.json location if several exist.
-            candidates.sort(key=lambda n: (not n.lower().endswith("json/friends.json"), len(n)))
+            # Prefer JSON over HTML, then the conventional json/friends.json location.
+            candidates.sort(key=lambda n: (not n.lower().endswith(".json"), not n.lower().endswith("json/friends.json"), len(n)))
             with zf.open(candidates[0]) as fh:
-                return _parse_json(fh.read().decode("utf-8-sig"), f"{path}:{candidates[0]}")
+                return _parse_bytes(fh.read(), f"{path}:{candidates[0]}")
 
-    with open(path, "r", encoding="utf-8-sig") as fh:
-        return _parse_json(fh.read(), path)
+    with open(path, "rb") as fh:
+        return _parse_bytes(fh.read(), path)
 
 
-def _find_in_dir(root: str, filename: str) -> Optional[str]:
-    for dirpath, _dirnames, filenames in os.walk(root):
-        for name in filenames:
-            if name.lower() == filename:
-                return os.path.join(dirpath, name)
-    return None
+def _find_in_dir(root: str, filenames: Iterable[str]) -> Optional[str]:
+    wanted = tuple(f.lower() for f in filenames)
+    best: Optional[str] = None
+    for dirpath, _dirnames, names in os.walk(root):
+        for name in names:
+            if name.lower() in wanted:
+                candidate = os.path.join(dirpath, name)
+                # JSON wins over HTML when both are present.
+                if best is None or (best.lower().endswith(".html") and candidate.lower().endswith(".json")):
+                    best = candidate
+    return best
+
+
+def _parse_bytes(raw: bytes, origin: str) -> Dict[str, Any]:
+    text = raw.decode("utf-8-sig", errors="replace")
+    stripped = text.lstrip()
+    if stripped.startswith("{") or stripped.startswith("["):
+        return _parse_json(text, origin)
+    if stripped[:200].lower().lstrip().startswith(("<!doctype", "<html")) or "<table" in text.lower():
+        return parse_friends_html(text, origin)
+    # Not obviously either; let the JSON parser produce the error message.
+    return _parse_json(text, origin)
 
 
 def _parse_json(text: str, origin: str) -> Dict[str, Any]:
@@ -105,12 +128,80 @@ def _parse_json(text: str, origin: str) -> Dict[str, Any]:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
         raise ValueError(
-            f"{origin} is not valid JSON ({exc}). If your export is in HTML format, "
-            "request it again from accounts.snapchat.com and pick JSON."
+            f"{origin} is not valid JSON ({exc}). Expected Snapchat's friends.json or friends.html."
         ) from exc
     if not isinstance(data, dict):
         raise ValueError(f"{origin} does not look like a Snapchat friends.json (expected an object at the top level).")
     return data
+
+
+class _FriendsHTMLParser(HTMLParser):
+    """Turns Snapchat's friends.html (a heading followed by a table per section) into
+    the same ``{section: [row, ...]}`` structure as friends.json."""
+
+    HEADINGS = ("h1", "h2", "h3", "h4", "h5", "h6")
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.sections: Dict[str, List[Dict[str, str]]] = {}
+        self._heading_tag: Optional[str] = None
+        self._heading_text: List[str] = []
+        self._last_heading = ""
+        self._in_table = False
+        self._section = ""
+        self._headers: List[str] = []
+        self._row: List[str] = []
+        self._cell: Optional[List[str]] = None
+        self._cell_is_header = False
+        self._row_has_header_cells = False
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        if tag in self.HEADINGS:
+            self._heading_tag, self._heading_text = tag, []
+        elif tag == "table":
+            self._in_table, self._section, self._headers = True, self._last_heading, []
+            self.sections.setdefault(self._section, [])
+        elif self._in_table and tag == "tr":
+            self._row, self._row_has_header_cells = [], False
+        elif self._in_table and tag in ("td", "th"):
+            self._cell, self._cell_is_header = [], tag == "th"
+            self._row_has_header_cells = self._row_has_header_cells or tag == "th"
+        elif self._in_table and tag == "br" and self._cell is not None:
+            self._cell.append(" ")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == self._heading_tag:
+            self._last_heading = " ".join("".join(self._heading_text).split())
+            self._heading_tag = None
+        elif self._in_table and tag in ("td", "th") and self._cell is not None:
+            self._row.append(" ".join("".join(self._cell).split()))
+            self._cell = None
+        elif self._in_table and tag == "tr":
+            if self._row_has_header_cells and not self._headers:
+                self._headers = self._row
+            elif self._row and self._headers and any(self._row):
+                row = {h: v for h, v in zip(self._headers, self._row) if h}
+                self.sections[self._section].append(row)
+            self._row = []
+        elif tag == "table":
+            self._in_table = False
+
+    def handle_data(self, data: str) -> None:
+        if self._heading_tag is not None:
+            self._heading_text.append(data)
+        elif self._cell is not None:
+            self._cell.append(data)
+
+
+def parse_friends_html(text: str, origin: str = "friends.html") -> Dict[str, Any]:
+    """Parse the HTML export's friends page into the friends.json structure."""
+    parser = _FriendsHTMLParser()
+    parser.feed(text)
+    parser.close()
+    sections = {name: rows for name, rows in parser.sections.items() if name}
+    if not sections:
+        raise ValueError(f"{origin} contains no friend tables. Expected Snapchat's friends.html.")
+    return sections
 
 
 # --------------------------------------------------------------------------- parsing

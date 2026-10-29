@@ -64,16 +64,16 @@
     <h2>1. Get your Snapchat data</h2>
     <ol>
       <li>Sign in at <strong>accounts.snapchat.com</strong> and open <strong>My Data</strong>.</li>
-      <li>Tick <strong>Friends</strong> (you can untick everything else), choose <strong>JSON</strong> as the format, and submit.</li>
-      <li>Snapchat emails you a link to a <code>mydata~….zip</code>. Download it. Inside is <code>json/friends.json</code>.</li>
+      <li>Tick <strong>Friends</strong> (you can untick everything else) and submit. JSON or HTML format both work.</li>
+      <li>Snapchat emails you a link to a <code>mydata~….zip</code>. Download it. Inside is <code>json/friends.json</code> or <code>html/friends.html</code>.</li>
     </ol>
   </section>
 
   <section class="card">
     <h2>2. Open the file here</h2>
     <label class="drop" id="drop">
-      <input type="file" id="file" accept=".json,.zip,application/json,application/zip">
-      <div><strong>Choose or drop</strong> your <code>friends.json</code> (or the whole <code>mydata~….zip</code>)</div>
+      <input type="file" id="file" accept=".json,.html,.htm,.zip,application/json,text/html,application/zip">
+      <div><strong>Choose or drop</strong> your <code>friends.json</code> or <code>friends.html</code> (or the whole <code>mydata~….zip</code>)</div>
       <div class="muted" id="fileName">Nothing loaded yet. Stays on your device.</div>
     </label>
     <p class="muted" id="error" role="alert"></p>
@@ -224,8 +224,13 @@
       if (!window.JSZip) { showError('Could not load the zip reader (offline?). Unzip the file and choose json/friends.json instead.'); return; }
       JSZip.loadAsync(file).then(function (zip) {
         var entry = null;
-        zip.forEach(function (path, f) { if (/(^|\/)friends\.json$/i.test(path) && (!entry || path.length < entry.name.length)) entry = f; });
-        if (!entry) throw new Error('This zip has no friends.json. Request the export again with "Friends" ticked and JSON format.');
+        zip.forEach(function (path, f) {
+          var m = /(^|\/)friends\.(json|html?)$/i.exec(path);
+          if (!m) return;
+          var isJson = m[2].toLowerCase() === 'json';
+          if (!entry || (isJson && !entry.isJson) || (isJson === entry.isJson && path.length < entry.name.length)) { entry = f; entry.isJson = isJson; }
+        });
+        if (!entry) throw new Error('This zip has no friends.json or friends.html. Request the export again with "Friends" ticked.');
         return entry.async('string');
       }).then(parseText).catch(function (e) { showError(e.message || String(e)); });
     } else {
@@ -236,11 +241,46 @@
     }
   }
   function parseText(text) {
-    var data;
-    try { data = JSON.parse(String(text).replace(/^﻿/, '')); }
-    catch (e) { showError('That is not a JSON file. If your export is HTML, request it again from accounts.snapchat.com and pick JSON.'); return; }
-    if (!data || typeof data !== 'object' || Array.isArray(data)) { showError('That does not look like a Snapchat friends.json.'); return; }
+    text = String(text).replace(/^﻿/, '');
+    var trimmed = text.replace(/^\s+/, ''), data;
+    if (trimmed.charAt(0) === '{' || trimmed.charAt(0) === '[') {
+      try { data = JSON.parse(text); }
+      catch (e) { showError('That file is not valid JSON.'); return; }
+      if (!data || typeof data !== 'object' || Array.isArray(data)) { showError('That does not look like a Snapchat friends.json.'); return; }
+    } else if (/<table/i.test(text)) {
+      data = parseFriendsHtml(text);
+      if (!data) { showError('No friend tables found in that HTML file. Expected Snapchat\'s friends.html.'); return; }
+    } else {
+      showError('That does not look like a Snapchat friends.json or friends.html.'); return;
+    }
     analyse(data);
+  }
+  // The HTML export is a heading followed by a table per section; turn it into the JSON shape.
+  function parseFriendsHtml(text) {
+    var doc = new DOMParser().parseFromString(text, 'text/html');
+    var sections = {}, found = false;
+    Array.prototype.forEach.call(doc.querySelectorAll('table'), function (table) {
+      var heading = null, node = table;
+      while (node && !heading) {   // nearest preceding heading in document order
+        var prev = node.previousElementSibling;
+        if (!prev) { node = node.parentElement; continue; }
+        node = prev;
+        if (/^H[1-6]$/.test(node.tagName)) heading = node;
+        else { var inner = node.querySelectorAll('h1,h2,h3,h4,h5,h6'); if (inner.length) heading = inner[inner.length - 1]; }
+      }
+      var name = heading ? heading.textContent.replace(/\s+/g, ' ').trim() : '';
+      if (!name) return;
+      var headers = [];
+      sections[name] = sections[name] || [];
+      Array.prototype.forEach.call(table.querySelectorAll('tr'), function (tr) {
+        var cells = Array.prototype.map.call(tr.querySelectorAll('th,td'), function (c) { return c.textContent.replace(/\s+/g, ' ').trim(); });
+        if (!headers.length && tr.querySelector('th')) { headers = cells; return; }
+        if (!headers.length || !cells.some(Boolean)) return;
+        var row = {}; headers.forEach(function (h, i) { if (h) row[h] = cells[i] || ''; });
+        sections[name].push(row); found = true;
+      });
+    });
+    return Object.keys(sections).length ? sections : null;
   }
 
   $('file').addEventListener('change', function (e) { handleFile(e.target.files[0]); });

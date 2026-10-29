@@ -1,5 +1,6 @@
 # Your real Snapchat data export is personal data. Never commit it.
 friends.json
+friends.html
 mydata*
 mydata*/
 *.zip

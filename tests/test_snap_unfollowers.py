@@ -11,7 +11,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import snap_unfollowers as su  # noqa: E402
 
-SAMPLE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sample", "friends.sample.json")
+SAMPLE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sample")
+SAMPLE = os.path.join(SAMPLE_DIR, "friends.sample.json")
+SAMPLE_HTML = os.path.join(SAMPLE_DIR, "friends.sample.html")
 
 
 def person(username, display="", added="2020-01-01 00:00:00 UTC", source="ADDED_BY_USERNAME"):
@@ -101,14 +103,60 @@ class LoadingTests(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 su.load_friends_data(zip_path)
 
-    def test_html_export_gives_helpful_error(self):
+    def test_html_without_tables_gives_helpful_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "friends.html")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("<html><body><h2>Friends</h2><p>nothing here</p></body></html>")
+            with self.assertRaises(ValueError) as ctx:
+                su.load_friends_data(path)
+            self.assertIn("friends.html", str(ctx.exception))
+
+    def test_garbage_file_gives_helpful_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "friends.json")
             with open(path, "w", encoding="utf-8") as fh:
-                fh.write("<html><body>friends</body></html>")
-            with self.assertRaises(ValueError) as ctx:
+                fh.write("hello there")
+            with self.assertRaises(ValueError):
                 su.load_friends_data(path)
-            self.assertIn("JSON", str(ctx.exception))
+
+
+class HtmlExportTests(unittest.TestCase):
+    def test_html_matches_json_sample(self):
+        html_data = su.load_friends_data(SAMPLE_HTML)
+        self.assertEqual(set(html_data), {"Friends", "Friend Requests Sent", "Blocked Users", "Deleted Friends"})
+        people = su.find_not_following_back(html_data)
+        self.assertEqual([p.username for p in people], ["old_classmate", "party_guy_2021", "travel.influencer"])
+        self.assertEqual(people[0].display_name, "Jess & co")      # entity decoded
+        self.assertEqual(people[0].source, "added by phone")
+        self.assertEqual(su.summary(html_data)["mutual_friends"], 2)
+        self.assertEqual(html_data["Deleted Friends"], [])
+
+    def test_blocked_excluded_from_html(self):
+        data = su.parse_friends_html("""<h2>Friend Requests Sent</h2><table><tr><th>Username</th><th>Display Name</th></tr>
+            <tr><td>creep</td><td></td></tr><tr><td>fine</td><td>F</td></tr></table>
+            <h2>Blocked Users</h2><table><tr><th>Username</th></tr><tr><td>creep</td></tr></table>""")
+        self.assertEqual([p.username for p in su.find_not_following_back(data)], ["fine"])
+
+    def test_html_zip_and_folder_and_json_preference(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            html_dir = os.path.join(tmp, "mydata~1", "html")
+            os.makedirs(html_dir)
+            with open(SAMPLE_HTML, "rb") as src, open(os.path.join(html_dir, "friends.html"), "wb") as dst:
+                dst.write(src.read())
+            self.assertEqual(su.summary(su.load_friends_data(os.path.join(tmp, "mydata~1")))["not_following_back"], 3)
+
+            zip_path = os.path.join(tmp, "mydata~1.zip")
+            with zipfile.ZipFile(zip_path, "w") as zf:
+                zf.write(os.path.join(html_dir, "friends.html"), "html/friends.html")
+                zf.writestr("index.html", "<html><body>index</body></html>")
+            self.assertEqual(su.summary(su.load_friends_data(zip_path))["not_following_back"], 3)
+
+            # When both formats are present, JSON is used.
+            with zipfile.ZipFile(zip_path, "w") as zf:
+                zf.write(os.path.join(html_dir, "friends.html"), "html/friends.html")
+                zf.writestr("json/friends.json", json.dumps({"Friend Requests Sent": [person("only_in_json")]}))
+            self.assertEqual([p.username for p in su.find_not_following_back(su.load_friends_data(zip_path))], ["only_in_json"])
 
     def test_missing_path(self):
         with self.assertRaises(FileNotFoundError):
